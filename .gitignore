@@ -1,0 +1,6 @@
+.DS_Store
+test.jpage
+build/
+target/
+/solarnetwork-build
+/solarnetwork-osgi-target

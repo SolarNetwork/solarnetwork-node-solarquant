@@ -22,38 +22,32 @@
 
 package net.solarnetwork.node.datum.solarquant;
 
-
 import java.io.BufferedReader;
 import java.io.IOException;
 import java.io.InputStreamReader;
 import java.net.HttpURLConnection;
 import java.net.URL;
-import java.text.ParseException;
-import java.text.SimpleDateFormat;
+import java.time.Instant;
 import java.util.ArrayList;
 import java.util.Collection;
-import java.util.Date;
+import java.util.Collections;
 import java.util.List;
-import java.util.concurrent.atomic.AtomicLong;
-import net.solarnetwork.node.IdentityService;
-import net.solarnetwork.node.MultiDatumDataSource;
-import net.solarnetwork.node.domain.GeneralNodePVEnergyDatum;
-import net.solarnetwork.node.settings.SettingSpecifier;
-import net.solarnetwork.node.settings.SettingSpecifierProvider;
-import net.solarnetwork.node.settings.support.BasicTextFieldSettingSpecifier;
-import net.solarnetwork.util.OptionalService;
-
-
-import org.slf4j.Logger;
-import org.slf4j.LoggerFactory;
-import org.springframework.context.MessageSource;
-
-import com.fasterxml.jackson.core.JsonProcessingException;
+import org.springframework.util.FileCopyUtils;
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
+import net.solarnetwork.codec.JsonUtils;
+import net.solarnetwork.domain.datum.DatumSamples;
+import net.solarnetwork.node.domain.datum.NodeDatum;
+import net.solarnetwork.node.domain.datum.SimpleEnergyDatum;
+import net.solarnetwork.node.service.MultiDatumDataSource;
+import net.solarnetwork.node.service.support.DatumDataSourceSupport;
+import net.solarnetwork.settings.SettingSpecifier;
+import net.solarnetwork.settings.SettingSpecifierProvider;
+import net.solarnetwork.settings.support.BasicTextFieldSettingSpecifier;
+import net.solarnetwork.util.DateUtils;
 
 /**
- * FIXME
+ * Collect prediction energy values as a datum stream from a SolarQuant server.
  * 
  * <p>
  * Request the most recent prediction for a source, dump prediction to SolarNet
@@ -61,219 +55,111 @@ import com.fasterxml.jackson.databind.ObjectMapper;
  * </p>
  * 
  * @author matthew
- * @version 1.0
+ * @version 2.0
  */
-public class SolarQuantDatumDataSource
-implements MultiDatumDataSource<GeneralNodePVEnergyDatum>, SettingSpecifierProvider {
-	/**
-	 * 
-	 */
-	private final AtomicLong wattHourReading = new AtomicLong(0);
-	private final Logger log = LoggerFactory.getLogger(getClass());
-	private String sourceId = "Solar";
+public class SolarQuantDatumDataSource extends DatumDataSourceSupport
+		implements MultiDatumDataSource, SettingSpecifierProvider {
 
-	private String baseURL = "http://localhost/solarquant/api/prediction/retrieveprediction.php";
-	private static HttpURLConnection con;
-	OptionalService<IdentityService> identityService;
-	private String nodeId = "205";
+	public static final String DEFAULT_BASE_URL = "http://localhost/solarquant/api/prediction/retrieveprediction.php";
 
-	public void setSourceId(String sourceId) {
-		this.sourceId = sourceId;
-	}
-
-	public String getSourceId() {
-
-		return this.sourceId;
-	}
-
-	public void setBaseURL(String baseURL) {
-
-		this.baseURL = baseURL;
-	}
-
-	public String getBaseURL() {
-
-		return this.baseURL;
-	}
-
-	public SolarQuantDatumDataSource() {
-		// TODO Auto-generated constructor stub
-	}
+	private String sourceId;
+	private String baseURL = DEFAULT_BASE_URL;
+	private Long nodeId;
 
 	@Override
-	public String getUID() {
-		// TODO Auto-generated method stub
-		return this.sourceId;
-	}
-
-	@Override
-	public String getGroupUID() {
-		// TODO Auto-generated method stub
-		return null;
-	}
-
-	// @Override
-	public Class<? extends GeneralNodePVEnergyDatum> getDatumType() {
-		// TODO Auto-generated method stub
-		return GeneralNodePVEnergyDatum.class;
-	}
-
-	// @Override
-	public GeneralNodePVEnergyDatum readCurrentDatum() {
-
-		int watts = (int) Math.round(Math.random() * 1000.0);
-
-		// we'll increment our Wh reading by a random amount between 0-15, with
-		// the assumption we will read samples once per minute
-		long wattHours = wattHourReading.addAndGet(Math.round(Math.random() * 15.0));
-		GeneralNodePVEnergyDatum datum = new GeneralNodePVEnergyDatum();
-
-		datum.setCreated(new Date());
-		datum.setWatts(watts);
-		datum.setWattHourReading(wattHours);
-		datum.setSourceId(sourceId);
-		return datum;
-
-	}
-
-	private MessageSource messageSource;
-
-	@Override
-	public String getSettingUID() {
-		// TODO Auto-generated method stub
-		return "net.solarnetwork.node.datum.solarquant.foobar";
+	public String getSettingUid() {
+		return "net.solarnetwork.node.datum.solarquant";
 	}
 
 	@Override
 	public String getDisplayName() {
-		// TODO Auto-generated method stub
-		return "SolarQuant";
-	}
-
-	@Override
-	public MessageSource getMessageSource() {
-		// TODO Auto-generated method stub
-		return messageSource;
-	}
-
-	public void setMessageSource(MessageSource messageSource) {
-		this.messageSource = messageSource;
+		return "SolarQuant Datum Source";
 	}
 
 	@Override
 	public List<SettingSpecifier> getSettingSpecifiers() {
-		SolarQuantDatumDataSource defaults = new SolarQuantDatumDataSource();
-		List<SettingSpecifier> results = new ArrayList<SettingSpecifier>(1);
-		results.add(new BasicTextFieldSettingSpecifier("sourceId", defaults.sourceId));
-		results.add(new BasicTextFieldSettingSpecifier("baseURL", defaults.baseURL));
-		results.add(new BasicTextFieldSettingSpecifier("nodeId", defaults.nodeId));
-		return results;
+		List<SettingSpecifier> result = getIdentifiableSettingSpecifiers();
+		result.add(new BasicTextFieldSettingSpecifier("baseURL", DEFAULT_BASE_URL));
+		result.add(new BasicTextFieldSettingSpecifier("sourceId", null));
+		result.add(new BasicTextFieldSettingSpecifier("nodeId", null));
+		return result;
 	}
 
 	@Override
-	public Class<? extends GeneralNodePVEnergyDatum> getMultiDatumType() {
-		// TODO Auto-generated method stub
-		return GeneralNodePVEnergyDatum.class;
+	public Class<? extends NodeDatum> getMultiDatumType() {
+		return net.solarnetwork.node.domain.datum.EnergyDatum.class;
 	}
 
 	@Override
-	public Collection<GeneralNodePVEnergyDatum> readMultipleDatum() {
-
-		String jsonPrediction = getPredictionJson();
-		Collection<GeneralNodePVEnergyDatum> out = null;
-
-		out = decodeJson(jsonPrediction);
-
-		return out;
-
+	public Collection<NodeDatum> readMultipleDatum() {
+		final Long nodeId = getNodeId();
+		final String sourceId = getSourceId();
+		if ( nodeId == null || sourceId == null || sourceId.trim().isEmpty() ) {
+			return Collections.emptyList();
+		}
+		final String jsonPrediction = getPredictionJson(nodeId, sourceId);
+		log.trace("Got SolarQuant JSON response: {}", jsonPrediction);
+		return decodeJson(jsonPrediction, sourceId);
 	}
 
-	private String getPredictionJson() {
-
+	private String getPredictionJson(final Long nodeId, final String sourceId) {
 		StringBuilder sb = new StringBuilder();
 		try {
-			URL myurl = new URL(String.format(baseURL + "?nodeId=%s&srcId=%s", getNodeId(), sourceId));
-			log.debug(nodeId);
-			con = (HttpURLConnection) myurl.openConnection();
-
-			BufferedReader in = new BufferedReader(new InputStreamReader(con.getInputStream()));
-			String line;
-
-			while ((line = in.readLine()) != null) {
-				sb.append(line);
-			}
-
-		} catch (IOException e) {
+			URL url = new URL(String.format(baseURL + "?nodeId=%s&srcId=%s", nodeId, sourceId));
+			log.debug("Requesting SolarQuant predictions from [{}]", url);
+			HttpURLConnection con = (HttpURLConnection) url.openConnection();
+			return FileCopyUtils
+					.copyToString(new BufferedReader(new InputStreamReader(con.getInputStream())));
+		} catch ( IOException e ) {
 			e.printStackTrace();
 		}
 		return sb.toString();
 	}
 
-	private Collection<GeneralNodePVEnergyDatum> decodeJson(String json) {
-
-		SimpleDateFormat formatter = new SimpleDateFormat("yyyy-MM-dd hh:mm:ss");
-
-		Collection<GeneralNodePVEnergyDatum> datumList = new ArrayList<GeneralNodePVEnergyDatum>();
+	private Collection<NodeDatum> decodeJson(final String json, final String sourceId) {
+		Collection<NodeDatum> datumList = new ArrayList<>();
 
 		try {
 			ObjectMapper objectMapper = new ObjectMapper();
-
 			JsonNode n = objectMapper.readTree(json);
 
+			for ( JsonNode datumNode : n ) {
+				Instant t = JsonUtils.parseDateAttribute(datumNode, "DATE",
+						DateUtils.ISO_DATE_TIME_ALT_UTC, Instant::from);
 
-			for (JsonNode datumNode : n) {
-				
-				GeneralNodePVEnergyDatum datum = new GeneralNodePVEnergyDatum();
-
-
-				Date parsedDate = new Date();
-				try {
-					parsedDate = formatter.parse(datumNode.get("DATE").asText());
-				} catch (ParseException e1) {
-
-					e1.printStackTrace();
-				}
-				
-				datum.setCreated(parsedDate);
+				SimpleEnergyDatum datum = new SimpleEnergyDatum(sourceId, t, new DatumSamples());
 				datum.setWattHourReading(Long.parseLong(datumNode.get("PREDICTED_WATT_HOURS").asText()));
-				datum.setSourceId(sourceId);
 				datumList.add(datum);
 			}
-
-
-		} catch (JsonProcessingException e) {
-			// TODO Auto-generated catch block
-			e.printStackTrace();
-		} catch (IOException e) {
-			// TODO Auto-generated catch block
+		} catch ( IOException e ) {
 			e.printStackTrace();
 		}
 		return datumList;
 
 	}
 
-	/**
-	 * Set the {@link IdentityService} to use.
-	 * 
-	 * @param identityService
-	 *            the service to set
-	 */
-	public void setIdentityService(OptionalService<IdentityService> identityService) {
-		this.identityService = identityService;
+	public void setSourceId(String sourceId) {
+		this.sourceId = sourceId;
 	}
 
-	public void setNodeId(String nodeId) {
+	public String getSourceId() {
+		return this.sourceId;
+	}
+
+	public void setBaseURL(String baseURL) {
+		this.baseURL = baseURL;
+	}
+
+	public String getBaseURL() {
+		return this.baseURL;
+	}
+
+	public void setNodeId(Long nodeId) {
 		this.nodeId = nodeId;
 	}
 
-	public long getNodeId() {
-		return Long.parseLong(nodeId);
-	}
-
-	private long getNodeIdFromService() {
-		IdentityService service = (identityService != null ? identityService.service() : null);
-		final Long nodeId = (service != null ? service.getNodeId() : null);
-		return (nodeId != null ? nodeId : 0L);
+	public Long getNodeId() {
+		return nodeId;
 	}
 
 }
