@@ -1,21 +1,21 @@
 /* ==================================================================
  * TestDatumDataSource.java - 13/02/2018 2:21:47 PM
- * 
+ *
  * Copyright 2018 SolarNetwork.net Dev Team
- * 
- * This program is free software; you can redistribute it and/or 
- * modify it under the terms of the GNU General Public License as 
- * published by the Free Software Foundation; either version 2 of 
+ *
+ * This program is free software; you can redistribute it and/or
+ * modify it under the terms of the GNU General Public License as
+ * published by the Free Software Foundation; either version 2 of
  * the License, or (at your option) any later version.
- * 
- * This program is distributed in the hope that it will be useful, 
- * but WITHOUT ANY WARRANTY; without even the implied warranty of 
- * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE. See the GNU 
+ *
+ * This program is distributed in the hope that it will be useful,
+ * but WITHOUT ANY WARRANTY; without even the implied warranty of
+ * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE. See the GNU
  * General Public License for more details.
- * 
- * You should have received a copy of the GNU General Public License 
- * along with this program; if not, write to the Free Software 
- * Foundation, Inc., 59 Temple Place, Suite 330, Boston, MA 
+ *
+ * You should have received a copy of the GNU General Public License
+ * along with this program; if not, write to the Free Software
+ * Foundation, Inc., 59 Temple Place, Suite 330, Boston, MA
  * 02111-1307 USA
  * ==================================================================
  */
@@ -48,23 +48,38 @@ import net.solarnetwork.util.DateUtils;
 
 /**
  * Collect prediction energy values as a datum stream from a SolarQuant server.
- * 
+ *
  * <p>
  * Request the most recent prediction for a source, dump prediction to SolarNet
  * SolarNet overwrites last prediction for node + source
  * </p>
- * 
+ *
  * @author matthew
- * @version 2.0
+ * @version 2.1
  */
 public class SolarQuantDatumDataSource extends DatumDataSourceSupport
 		implements MultiDatumDataSource, SettingSpecifierProvider {
 
+	/** The {@code baseURL} property default value. */
 	public static final String DEFAULT_BASE_URL = "http://localhost/solarquant/api/prediction/retrieveprediction.php";
 
 	private String sourceId;
 	private String baseURL = DEFAULT_BASE_URL;
 	private Long nodeId;
+
+	/**
+	 * Constructor.
+	 */
+	public SolarQuantDatumDataSource() {
+		super();
+	}
+
+	@Override
+	public Collection<String> publishedSourceIds() {
+		final String sourceId = resolvePlaceholders(getSourceId());
+		return (sourceId == null || sourceId.isEmpty() ? Collections.emptySet()
+				: Collections.singleton(sourceId));
+	}
 
 	@Override
 	public String getSettingUid() {
@@ -138,26 +153,59 @@ public class SolarQuantDatumDataSource extends DatumDataSourceSupport
 
 	}
 
+	/**
+	 * Set the source ID.
+	 *
+	 * @param sourceId
+	 *        the source ID to set
+	 */
 	public void setSourceId(String sourceId) {
 		this.sourceId = sourceId;
 	}
 
+	/**
+	 * Get the source ID.
+	 *
+	 * @return the source ID
+	 */
 	public String getSourceId() {
 		return this.sourceId;
 	}
 
+	/**
+	 * Set the base URL.
+	 *
+	 * @param baseURL
+	 *        the base URL to set
+	 */
 	public void setBaseURL(String baseURL) {
 		this.baseURL = baseURL;
 	}
 
+	/**
+	 * Get the base URL.
+	 *
+	 * @return the base URL
+	 */
 	public String getBaseURL() {
 		return this.baseURL;
 	}
 
+	/**
+	 * Set the node ID.
+	 *
+	 * @param nodeId
+	 *        the node ID
+	 */
 	public void setNodeId(Long nodeId) {
 		this.nodeId = nodeId;
 	}
 
+	/**
+	 * Get the node ID.
+	 *
+	 * @return the node ID
+	 */
 	public Long getNodeId() {
 		return nodeId;
 	}
