@@ -33,7 +33,6 @@ import java.time.Duration;
 import java.time.Instant;
 import java.util.ArrayList;
 import java.util.Collection;
-import java.util.Iterator;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
@@ -321,9 +320,7 @@ public class SolarQuantService extends BaseIdentifiable
 
 				JsonNode iNode = pred.get("i");
 				if ( iNode != null && iNode.isObject() ) {
-					Iterator<Map.Entry<String, JsonNode>> fields = iNode.fields();
-					while ( fields.hasNext() ) {
-						Map.Entry<String, JsonNode> e = fields.next();
+					for ( Map.Entry<String, JsonNode> e : iNode.properties() ) {
 						if ( e.getValue().isNumber() ) {
 							samples.putInstantaneousSampleValue(
 									e.getKey(), e.getValue().numberValue());
@@ -333,17 +330,13 @@ public class SolarQuantService extends BaseIdentifiable
 
 				JsonNode sNode = pred.get("s");
 				if ( sNode != null && sNode.isObject() ) {
-					Iterator<Map.Entry<String, JsonNode>> fields = sNode.fields();
-					while ( fields.hasNext() ) {
-						Map.Entry<String, JsonNode> e = fields.next();
+					for ( Map.Entry<String, JsonNode> e : sNode.properties() ) {
 						samples.putStatusSampleValue(e.getKey(), e.getValue().asText());
 					}
 				}
 
 				if ( metaNode != null && metaNode.isObject() ) {
-					Iterator<Map.Entry<String, JsonNode>> fields = metaNode.fields();
-					while ( fields.hasNext() ) {
-						Map.Entry<String, JsonNode> e = fields.next();
+					for ( Map.Entry<String, JsonNode> e : metaNode.properties() ) {
 						String key = e.getKey();
 						if ( "sourceIndex".equals(key) ) {
 							continue;
@@ -426,9 +419,7 @@ public class SolarQuantService extends BaseIdentifiable
 				}
 				JsonNode details = root.get("details");
 				if ( details != null && details.isObject() ) {
-					Iterator<Map.Entry<String, JsonNode>> fields = details.fields();
-					while ( fields.hasNext() ) {
-						Map.Entry<String, JsonNode> e = fields.next();
+					for ( Map.Entry<String, JsonNode> e : details.properties() ) {
 						props.put(e.getKey(), e.getValue().asText());
 					}
 				}
