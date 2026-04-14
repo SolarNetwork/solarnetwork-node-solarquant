@@ -11,16 +11,16 @@ Requires Java 17, Apache Ant, and Git LFS. Clone [solarnetwork-build](https://gi
 ```
 parent/
   solarnetwork-build/
-  solarnetwork-node/
-    solarquant/
+  solarquant-solarnetwork-node/
+    net.solarnetwork.node.datum.solarquant/
 ```
 
 ```bash
-cd solarquant
+cd solarquant-solarnetwork-node/net.solarnetwork.node.datum.solarquant
 ant jar
 ```
 
-Output: `target/net.solarnetwork.node.datum.solarquant-1.0.0.jar`
+Output: `net.solarnetwork.node.datum.solarquant/target/net.solarnetwork.node.datum.solarquant-1.0.0.jar`
 
 ## Configuration
 
@@ -37,7 +37,7 @@ Add a **SolarQuant Anomaly Detection** component in the SolarNode Settings UI.
 | Read Timeout | `30000` ms | HTTP read timeout. |
 | Docker Command | `/opt/solarnode/bin/solarquant` | Path to the Docker management script. |
 
-The plugin calls an external script to manage containers. Install `def/solarquant.sh` to the SolarNode bin directory -- see `def/README.md`.
+The plugin calls an external script to manage containers. Install `net.solarnetwork.node.datum.solarquant/def/solarquant.sh` to the SolarNode bin directory -- see `net.solarnetwork.node.datum.solarquant/def/README.md`.
 
 ## Protocol
 
