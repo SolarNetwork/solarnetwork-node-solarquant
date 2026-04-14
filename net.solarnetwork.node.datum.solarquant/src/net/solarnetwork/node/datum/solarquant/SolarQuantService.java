@@ -28,6 +28,7 @@ import java.io.IOException;
 import java.io.InputStreamReader;
 import java.net.URI;
 import java.nio.charset.StandardCharsets;
+import java.time.Duration;
 import java.time.Instant;
 import java.util.ArrayList;
 import java.util.Collection;
@@ -39,10 +40,7 @@ import java.util.Map;
 import java.util.Set;
 import java.util.concurrent.ConcurrentLinkedQueue;
 import java.util.concurrent.CopyOnWriteArraySet;
-import java.util.concurrent.Executors;
-import java.util.concurrent.ScheduledExecutorService;
 import java.util.concurrent.ScheduledFuture;
-import java.util.concurrent.TimeUnit;
 import java.util.function.Consumer;
 import java.util.regex.Pattern;
 import java.util.regex.PatternSyntaxException;
@@ -51,6 +49,7 @@ import org.springframework.http.MediaType;
 import org.springframework.http.client.ClientHttpRequest;
 import org.springframework.http.client.ClientHttpRequestFactory;
 import org.springframework.http.client.ClientHttpResponse;
+import org.springframework.scheduling.TaskScheduler;
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import net.solarnetwork.domain.datum.DatumSamples;
@@ -116,9 +115,9 @@ public class SolarQuantService extends BaseIdentifiable
 	private volatile String lastStatusMessage;
 	private final ConcurrentLinkedQueue<NodeDatum> datumBuffer = new ConcurrentLinkedQueue<>();
 	private final Set<String> publishedSourceIds = new CopyOnWriteArraySet<>();
-	private ScheduledExecutorService scheduler;
+	private final TaskScheduler taskScheduler;
+	private final ObjectMapper objectMapper;
 	private ScheduledFuture<?> flushTask;
-	private ObjectMapper objectMapper;
 	private OptionalService<ClientHttpRequestFactory> httpRequestFactory;
 	private OptionalFilterableService<HttpRequestCustomizerService> httpRequestCustomizer;
 
@@ -129,26 +128,28 @@ public class SolarQuantService extends BaseIdentifiable
 	 *        the datum queue
 	 * @param identityService
 	 *        the identity service
+	 * @param taskScheduler
+	 *        the task scheduler for periodic flushes
+	 * @param objectMapper
+	 *        the JSON object mapper
 	 */
-	public SolarQuantService(DatumQueue datumQueue, IdentityService identityService) {
+	public SolarQuantService(DatumQueue datumQueue, IdentityService identityService,
+			TaskScheduler taskScheduler, ObjectMapper objectMapper) {
 		super();
 		this.datumQueue = datumQueue;
 		this.identityService = identityService;
+		this.taskScheduler = taskScheduler;
+		this.objectMapper = objectMapper;
 	}
 
 	public synchronized void serviceDidStartup() {
 		compileSourceIdRegex();
-		objectMapper = new ObjectMapper();
 
 		startContainer();
 
-		scheduler = Executors.newSingleThreadScheduledExecutor(r -> {
-			Thread t = new Thread(r, "SolarQuant-Flush");
-			t.setDaemon(true);
-			return t;
-		});
-		flushTask = scheduler.scheduleAtFixedRate(this::flushDatums,
-				flushIntervalSecs, flushIntervalSecs, TimeUnit.SECONDS);
+		Duration period = Duration.ofSeconds(flushIntervalSecs);
+		flushTask = taskScheduler.scheduleAtFixedRate(this::flushDatums,
+				Instant.now().plus(period), period);
 
 		datumQueue.addConsumer(this);
 		log.info("SolarQuant service started; forwarding to {}", serviceUrl);
@@ -161,16 +162,11 @@ public class SolarQuantService extends BaseIdentifiable
 			flushTask.cancel(false);
 			flushTask = null;
 		}
-		if ( scheduler != null ) {
-			scheduler.shutdown();
-			scheduler = null;
-		}
 
 		flushDatums();
 
 		stopContainer();
 
-		objectMapper = null;
 		log.info("SolarQuant service stopped.");
 	}
 
@@ -220,8 +216,7 @@ public class SolarQuantService extends BaseIdentifiable
 		}
 
 		final ClientHttpRequestFactory reqFactory = service(httpRequestFactory);
-		final ObjectMapper mapper = this.objectMapper;
-		if ( reqFactory == null || mapper == null ) {
+		if ( reqFactory == null ) {
 			return;
 		}
 
@@ -243,7 +238,7 @@ public class SolarQuantService extends BaseIdentifiable
 				datumsList.add(dm);
 			}
 
-			byte[] json = mapper.writeValueAsBytes(Map.of("datums", datumsList));
+			byte[] json = objectMapper.writeValueAsBytes(Map.of("datums", datumsList));
 			ByteList body = new ByteList(json);
 
 			ClientHttpRequest req = reqFactory.createRequest(
@@ -264,7 +259,7 @@ public class SolarQuantService extends BaseIdentifiable
 				String responseBody = new String(
 						response.getBody().readAllBytes(), StandardCharsets.UTF_8);
 				if ( status == 200 ) {
-					processMeasureResponse(responseBody, batch.size(), mapper);
+					processMeasureResponse(responseBody, batch.size());
 				} else {
 					lastStatusMessage = String.format("HTTP %d from %s/measure",
 							status, serviceUrl);
@@ -299,10 +294,9 @@ public class SolarQuantService extends BaseIdentifiable
 		}
 	}
 
-	private void processMeasureResponse(String responseJson, int sentCount,
-			ObjectMapper mapper) {
+	private void processMeasureResponse(String responseJson, int sentCount) {
 		try {
-			JsonNode root = mapper.readTree(responseJson);
+			JsonNode root = objectMapper.readTree(responseJson);
 			int accepted = root.has("accepted") ? root.get("accepted").asInt() : 0;
 
 			JsonNode predictions = root.get("predictions");
@@ -402,8 +396,7 @@ public class SolarQuantService extends BaseIdentifiable
 	@Override
 	public Result performPingTest() throws Exception {
 		final ClientHttpRequestFactory reqFactory = service(httpRequestFactory);
-		final ObjectMapper mapper = this.objectMapper;
-		if ( reqFactory == null || mapper == null ) {
+		if ( reqFactory == null ) {
 			return new PingTestResult(false, "Service not started");
 		}
 
@@ -428,7 +421,7 @@ public class SolarQuantService extends BaseIdentifiable
 				if ( httpStatus != 200 ) {
 					return new PingTestResult(false, "HTTP " + httpStatus);
 				}
-				JsonNode root = mapper.readTree(response.getBody());
+				JsonNode root = objectMapper.readTree(response.getBody());
 				String status = root.has("status") ? root.get("status").asText() : "unknown";
 				boolean healthy = "healthy".equals(status);
 

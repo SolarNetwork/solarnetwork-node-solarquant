@@ -18,6 +18,17 @@
 	<reference id="identityService" availability="optional"
 		interface="net.solarnetwork.node.service.IdentityService"/>
 
+	<reference id="taskScheduler"
+		interface="org.springframework.scheduling.TaskScheduler"
+		filter="(function=node)"/>
+
+	<reference id="objectMapperService"
+		interface="net.solarnetwork.service.ObjectMapperService"
+		filter="(function=node)"/>
+
+	<bean id="objectMapper" class="com.fasterxml.jackson.databind.ObjectMapper"
+		factory-ref="objectMapperService" factory-method="getObjectMapper"/>
+
 	<bean id="httpRequestFactory" class="net.solarnetwork.common.osgi.service.DynamicServiceTracker">
 		<argument ref="bundleContext"/>
 		<property name="serviceClassName" value="org.springframework.http.client.ClientHttpRequestFactory"/>
@@ -57,6 +68,8 @@
 				init-method="serviceDidStartup" destroy-method="serviceDidShutdown">
 			<argument ref="datumQueue"/>
 			<argument ref="identityService"/>
+			<argument ref="taskScheduler"/>
+			<argument ref="objectMapper"/>
 			<property name="messageSource" ref="messageSource"/>
 			<property name="httpRequestFactory" ref="httpRequestFactory"/>
 			<property name="httpRequestCustomizer">
