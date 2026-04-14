@@ -18,6 +18,12 @@
 	<reference id="identityService" availability="optional"
 		interface="net.solarnetwork.node.service.IdentityService"/>
 
+	<bean id="httpRequestFactory" class="net.solarnetwork.common.osgi.service.DynamicServiceTracker">
+		<argument ref="bundleContext"/>
+		<property name="serviceClassName" value="org.springframework.http.client.ClientHttpRequestFactory"/>
+		<property name="sticky" value="true"/>
+	</bean>
+
 	<!-- Services -->
 
 	<bean id="messageSource" class="org.springframework.context.support.ResourceBundleMessageSource">
@@ -52,6 +58,15 @@
 			<argument ref="datumQueue"/>
 			<argument ref="identityService"/>
 			<property name="messageSource" ref="messageSource"/>
+			<property name="httpRequestFactory" ref="httpRequestFactory"/>
+			<property name="httpRequestCustomizer">
+				<bean class="net.solarnetwork.common.osgi.service.DynamicServiceTracker">
+					<argument ref="bundleContext"/>
+					<property name="serviceClassName" value="net.solarnetwork.web.jakarta.service.HttpRequestCustomizerService"/>
+					<property name="sticky" value="true"/>
+					<property name="requirePropertyFilter" value="true"/>
+				</bean>
+			</property>
 		</bean>
 	</osgix:managed-service-factory>
 

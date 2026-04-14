@@ -22,17 +22,17 @@
 
 package net.solarnetwork.node.datum.solarquant;
 
+import static net.solarnetwork.service.OptionalService.service;
 import java.io.BufferedReader;
 import java.io.IOException;
 import java.io.InputStreamReader;
 import java.net.URI;
-import java.net.http.HttpClient;
-import java.net.http.HttpRequest;
-import java.net.http.HttpResponse;
-import java.time.Duration;
+import java.nio.charset.StandardCharsets;
 import java.time.Instant;
 import java.util.ArrayList;
 import java.util.Collection;
+import java.util.Collections;
+import java.util.HashMap;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
@@ -46,6 +46,11 @@ import java.util.concurrent.TimeUnit;
 import java.util.function.Consumer;
 import java.util.regex.Pattern;
 import java.util.regex.PatternSyntaxException;
+import org.springframework.http.HttpMethod;
+import org.springframework.http.MediaType;
+import org.springframework.http.client.ClientHttpRequest;
+import org.springframework.http.client.ClientHttpRequestFactory;
+import org.springframework.http.client.ClientHttpResponse;
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import net.solarnetwork.domain.datum.DatumSamples;
@@ -56,14 +61,19 @@ import net.solarnetwork.node.domain.datum.SimpleDatum;
 import net.solarnetwork.node.service.DatumQueue;
 import net.solarnetwork.node.service.DatumSourceIdProvider;
 import net.solarnetwork.node.service.IdentityService;
+import net.solarnetwork.node.service.PlaceholderService;
+import net.solarnetwork.node.service.support.BaseIdentifiable;
+import net.solarnetwork.service.OptionalService;
+import net.solarnetwork.service.OptionalService.OptionalFilterableService;
 import net.solarnetwork.service.PingTest;
 import net.solarnetwork.service.PingTestResult;
-import net.solarnetwork.node.service.support.BaseIdentifiable;
 import net.solarnetwork.settings.SettingSpecifier;
 import net.solarnetwork.settings.SettingSpecifierProvider;
 import net.solarnetwork.settings.SettingsChangeObserver;
 import net.solarnetwork.settings.support.BasicTextFieldSettingSpecifier;
 import net.solarnetwork.settings.support.BasicTitleSettingSpecifier;
+import net.solarnetwork.util.ByteList;
+import net.solarnetwork.web.jakarta.service.HttpRequestCustomizerService;
 
 /**
  * Forward datum to a SolarQuant service and post predictions back to the queue.
@@ -90,11 +100,7 @@ public class SolarQuantService extends BaseIdentifiable
 	/** The default value for the {@code flushIntervalSecs} property. */
 	public static final int DEFAULT_FLUSH_INTERVAL_SECS = 60;
 
-	/** The default value for the {@code connectionTimeoutMs} property. */
-	public static final int DEFAULT_CONNECTION_TIMEOUT_MS = 5000;
-
-	/** The default value for the {@code readTimeoutMs} property. */
-	public static final int DEFAULT_READ_TIMEOUT_MS = 30000;
+	private static final long PING_MAX_EXECUTION_MS = 10_000L;
 
 	private final DatumQueue datumQueue;
 	private final IdentityService identityService;
@@ -105,8 +111,6 @@ public class SolarQuantService extends BaseIdentifiable
 	private String containerImage = "";
 	private String dockerCommand = DEFAULT_DOCKER_COMMAND;
 	private int flushIntervalSecs = DEFAULT_FLUSH_INTERVAL_SECS;
-	private int connectionTimeoutMs = DEFAULT_CONNECTION_TIMEOUT_MS;
-	private int readTimeoutMs = DEFAULT_READ_TIMEOUT_MS;
 
 	private volatile Pattern sourceIdRegex;
 	private volatile String lastStatusMessage;
@@ -114,8 +118,9 @@ public class SolarQuantService extends BaseIdentifiable
 	private final Set<String> publishedSourceIds = new CopyOnWriteArraySet<>();
 	private ScheduledExecutorService scheduler;
 	private ScheduledFuture<?> flushTask;
-	private HttpClient httpClient;
 	private ObjectMapper objectMapper;
+	private OptionalService<ClientHttpRequestFactory> httpRequestFactory;
+	private OptionalFilterableService<HttpRequestCustomizerService> httpRequestCustomizer;
 
 	/**
 	 * Constructor.
@@ -134,9 +139,6 @@ public class SolarQuantService extends BaseIdentifiable
 	public synchronized void serviceDidStartup() {
 		compileSourceIdRegex();
 		objectMapper = new ObjectMapper();
-		httpClient = HttpClient.newBuilder()
-				.connectTimeout(Duration.ofMillis(connectionTimeoutMs))
-				.build();
 
 		startContainer();
 
@@ -168,7 +170,6 @@ public class SolarQuantService extends BaseIdentifiable
 
 		stopContainer();
 
-		httpClient = null;
 		objectMapper = null;
 		log.info("SolarQuant service stopped.");
 	}
@@ -218,9 +219,9 @@ public class SolarQuantService extends BaseIdentifiable
 			return;
 		}
 
-		final HttpClient client = this.httpClient;
+		final ClientHttpRequestFactory reqFactory = service(httpRequestFactory);
 		final ObjectMapper mapper = this.objectMapper;
-		if ( client == null || mapper == null ) {
+		if ( reqFactory == null || mapper == null ) {
 			return;
 		}
 
@@ -242,37 +243,52 @@ public class SolarQuantService extends BaseIdentifiable
 				datumsList.add(dm);
 			}
 
-			Map<String, Object> requestBody = Map.of("datums", datumsList);
-			String json = mapper.writeValueAsString(requestBody);
+			byte[] json = mapper.writeValueAsBytes(Map.of("datums", datumsList));
+			ByteList body = new ByteList(json);
 
-			HttpRequest request = HttpRequest.newBuilder()
-					.uri(URI.create(serviceUrl + "/measure"))
-					.header("Content-Type", "application/json")
-					.POST(HttpRequest.BodyPublishers.ofString(json))
-					.timeout(Duration.ofMillis(readTimeoutMs))
-					.build();
+			ClientHttpRequest req = reqFactory.createRequest(
+					URI.create(serviceUrl + "/measure"), HttpMethod.POST);
+			req.getHeaders().setContentType(MediaType.APPLICATION_JSON);
+			req.getHeaders().setAccept(List.of(MediaType.APPLICATION_JSON));
 
-			HttpResponse<String> response = client.send(request,
-					HttpResponse.BodyHandlers.ofString());
-
-			if ( response.statusCode() == 200 ) {
-				processMeasureResponse(response.body(), batch.size(), mapper);
+			HttpRequestCustomizerService cust = service(httpRequestCustomizer);
+			if ( cust != null ) {
+				req = cust.apply(reqFactory, req, body, customizerParameters());
 			} else {
-				lastStatusMessage = String.format("HTTP %d from %s/measure",
-						response.statusCode(), serviceUrl);
-				log.warn("SolarQuant service returned {}: {}", response.statusCode(),
-						response.body());
+				req.getHeaders().setContentLength(body.size());
+				req.getBody().write(body.toArrayValue());
+			}
+
+			try ( ClientHttpResponse response = req.execute() ) {
+				int status = response.getStatusCode().value();
+				String responseBody = new String(
+						response.getBody().readAllBytes(), StandardCharsets.UTF_8);
+				if ( status == 200 ) {
+					processMeasureResponse(responseBody, batch.size(), mapper);
+				} else {
+					lastStatusMessage = String.format("HTTP %d from %s/measure",
+							status, serviceUrl);
+					log.warn("SolarQuant service returned {}: {}", status, responseBody);
+				}
 			}
 		} catch ( IOException e ) {
 			lastStatusMessage = "Error: " + e.getMessage();
 			log.error("Error forwarding {} datums to SolarQuant service at {}: {}",
 					batch.size(), serviceUrl, e.getMessage());
-		} catch ( InterruptedException e ) {
-			Thread.currentThread().interrupt();
 		} catch ( Exception e ) {
 			lastStatusMessage = "Error: " + e.getMessage();
 			log.error("Unexpected error flushing datums to SolarQuant service", e);
 		}
+	}
+
+	private Map<String, Object> customizerParameters() {
+		PlaceholderService phs = service(getPlaceholderService());
+		if ( phs != null ) {
+			Map<String, Object> p = new HashMap<>();
+			phs.copyPlaceholders(p);
+			return p;
+		}
+		return Collections.emptyMap();
 	}
 
 	private void addSampleData(Map<String, Object> dm, String key,
@@ -380,14 +396,14 @@ public class SolarQuantService extends BaseIdentifiable
 
 	@Override
 	public long getPingTestMaximumExecutionMilliseconds() {
-		return connectionTimeoutMs + 1000L;
+		return PING_MAX_EXECUTION_MS;
 	}
 
 	@Override
 	public Result performPingTest() throws Exception {
-		final HttpClient client = this.httpClient;
+		final ClientHttpRequestFactory reqFactory = service(httpRequestFactory);
 		final ObjectMapper mapper = this.objectMapper;
-		if ( client == null || mapper == null ) {
+		if ( reqFactory == null || mapper == null ) {
 			return new PingTestResult(false, "Service not started");
 		}
 
@@ -398,17 +414,21 @@ public class SolarQuantService extends BaseIdentifiable
 		}
 
 		try {
-			HttpRequest request = HttpRequest.newBuilder()
-					.uri(URI.create(serviceUrl + "/health"))
-					.GET()
-					.timeout(Duration.ofMillis(connectionTimeoutMs))
-					.build();
+			ClientHttpRequest req = reqFactory.createRequest(
+					URI.create(serviceUrl + "/health"), HttpMethod.GET);
+			req.getHeaders().setAccept(List.of(MediaType.APPLICATION_JSON));
 
-			HttpResponse<String> response = client.send(request,
-					HttpResponse.BodyHandlers.ofString());
+			HttpRequestCustomizerService cust = service(httpRequestCustomizer);
+			if ( cust != null ) {
+				req = cust.apply(reqFactory, req, new ByteList(), customizerParameters());
+			}
 
-			if ( response.statusCode() == 200 ) {
-				JsonNode root = mapper.readTree(response.body());
+			try ( ClientHttpResponse response = req.execute() ) {
+				int httpStatus = response.getStatusCode().value();
+				if ( httpStatus != 200 ) {
+					return new PingTestResult(false, "HTTP " + httpStatus);
+				}
+				JsonNode root = mapper.readTree(response.getBody());
 				String status = root.has("status") ? root.get("status").asText() : "unknown";
 				boolean healthy = "healthy".equals(status);
 
@@ -424,8 +444,6 @@ public class SolarQuantService extends BaseIdentifiable
 					}
 				}
 				return new PingTestResult(healthy, status, props);
-			} else {
-				return new PingTestResult(false, "HTTP " + response.statusCode());
 			}
 		} catch ( Exception e ) {
 			return new PingTestResult(false, e.getMessage());
@@ -458,12 +476,10 @@ public class SolarQuantService extends BaseIdentifiable
 				DEFAULT_UPLOAD_SOURCE_ID));
 		results.add(new BasicTextFieldSettingSpecifier("flushIntervalSecs",
 				String.valueOf(DEFAULT_FLUSH_INTERVAL_SECS)));
-		results.add(new BasicTextFieldSettingSpecifier("connectionTimeoutMs",
-				String.valueOf(DEFAULT_CONNECTION_TIMEOUT_MS)));
-		results.add(new BasicTextFieldSettingSpecifier("readTimeoutMs",
-				String.valueOf(DEFAULT_READ_TIMEOUT_MS)));
 		results.add(new BasicTextFieldSettingSpecifier("dockerCommand",
 				DEFAULT_DOCKER_COMMAND));
+		results.add(new BasicTextFieldSettingSpecifier("httpRequestCustomizerUid", null, false,
+				"(objectClass=net.solarnetwork.web.service.HttpRequestCustomizerService)"));
 
 		return results;
 	}
@@ -645,20 +661,33 @@ public class SolarQuantService extends BaseIdentifiable
 		this.flushIntervalSecs = flushIntervalSecs;
 	}
 
-	public int getConnectionTimeoutMs() {
-		return connectionTimeoutMs;
+	public OptionalService<ClientHttpRequestFactory> getHttpRequestFactory() {
+		return httpRequestFactory;
 	}
 
-	public void setConnectionTimeoutMs(int connectionTimeoutMs) {
-		this.connectionTimeoutMs = connectionTimeoutMs;
+	public void setHttpRequestFactory(OptionalService<ClientHttpRequestFactory> httpRequestFactory) {
+		this.httpRequestFactory = httpRequestFactory;
 	}
 
-	public int getReadTimeoutMs() {
-		return readTimeoutMs;
+	public OptionalFilterableService<HttpRequestCustomizerService> getHttpRequestCustomizer() {
+		return httpRequestCustomizer;
 	}
 
-	public void setReadTimeoutMs(int readTimeoutMs) {
-		this.readTimeoutMs = readTimeoutMs;
+	public void setHttpRequestCustomizer(
+			OptionalFilterableService<HttpRequestCustomizerService> httpRequestCustomizer) {
+		this.httpRequestCustomizer = httpRequestCustomizer;
+	}
+
+	public String getHttpRequestCustomizerUid() {
+		final OptionalFilterableService<HttpRequestCustomizerService> s = getHttpRequestCustomizer();
+		return (s != null ? s.getPropertyValue(UID_PROPERTY) : null);
+	}
+
+	public void setHttpRequestCustomizerUid(String uid) {
+		final OptionalFilterableService<HttpRequestCustomizerService> s = getHttpRequestCustomizer();
+		if ( s != null ) {
+			s.setPropertyFilter(UID_PROPERTY, uid);
+		}
 	}
 
 }
