@@ -32,11 +32,14 @@ import java.net.http.HttpResponse;
 import java.time.Duration;
 import java.time.Instant;
 import java.util.ArrayList;
+import java.util.Collection;
 import java.util.Iterator;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.Set;
 import java.util.concurrent.ConcurrentLinkedQueue;
+import java.util.concurrent.CopyOnWriteArraySet;
 import java.util.concurrent.Executors;
 import java.util.concurrent.ScheduledExecutorService;
 import java.util.concurrent.ScheduledFuture;
@@ -52,6 +55,7 @@ import net.solarnetwork.domain.datum.DatumSamplesType;
 import net.solarnetwork.node.domain.datum.NodeDatum;
 import net.solarnetwork.node.domain.datum.SimpleDatum;
 import net.solarnetwork.node.service.DatumQueue;
+import net.solarnetwork.node.service.DatumSourceIdProvider;
 import net.solarnetwork.node.service.IdentityService;
 import net.solarnetwork.service.PingTest;
 import net.solarnetwork.service.PingTestResult;
@@ -69,7 +73,8 @@ import net.solarnetwork.settings.support.BasicTitleSettingSpecifier;
  * @version 1.0
  */
 public class SolarQuantService extends BaseIdentifiable
-		implements Consumer<NodeDatum>, SettingSpecifierProvider, SettingsChangeObserver, PingTest {
+		implements Consumer<NodeDatum>, SettingSpecifierProvider, SettingsChangeObserver, PingTest,
+		DatumSourceIdProvider {
 
 	/** The default value for the {@code serviceUrl} property. */
 	public static final String DEFAULT_SERVICE_URL = "http://localhost:8000";
@@ -107,6 +112,7 @@ public class SolarQuantService extends BaseIdentifiable
 	private volatile Pattern sourceIdRegex;
 	private volatile String lastStatusMessage;
 	private final ConcurrentLinkedQueue<NodeDatum> datumBuffer = new ConcurrentLinkedQueue<>();
+	private final Set<String> publishedSourceIds = new CopyOnWriteArraySet<>();
 	private ScheduledExecutorService scheduler;
 	private ScheduledFuture<?> flushTask;
 	private HttpClient httpClient;
@@ -190,6 +196,11 @@ public class SolarQuantService extends BaseIdentifiable
 		}
 
 		datumBuffer.add(datum);
+	}
+
+	@Override
+	public Collection<String> publishedSourceIds() {
+		return publishedSourceIds;
 	}
 
 	private void flushDatums() {
@@ -348,6 +359,7 @@ public class SolarQuantService extends BaseIdentifiable
 				}
 
 				SimpleDatum datum = SimpleDatum.nodeDatum(sourceId, timestamp, samples);
+				publishedSourceIds.add(sourceId);
 				datumQueue.offer(datum, true);
 				predCount++;
 			}
