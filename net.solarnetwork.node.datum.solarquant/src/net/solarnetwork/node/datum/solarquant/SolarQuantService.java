@@ -66,6 +66,7 @@ import net.solarnetwork.service.OptionalService;
 import net.solarnetwork.service.OptionalService.OptionalFilterableService;
 import net.solarnetwork.service.PingTest;
 import net.solarnetwork.service.PingTestResult;
+import net.solarnetwork.service.ServiceLifecycleObserver;
 import net.solarnetwork.settings.SettingSpecifier;
 import net.solarnetwork.settings.SettingSpecifierProvider;
 import net.solarnetwork.settings.SettingsChangeObserver;
@@ -82,7 +83,7 @@ import net.solarnetwork.web.jakarta.service.HttpRequestCustomizerService;
  */
 public class SolarQuantService extends BaseIdentifiable
 		implements Consumer<NodeDatum>, SettingSpecifierProvider, SettingsChangeObserver, PingTest,
-		DatumSourceIdProvider {
+		DatumSourceIdProvider, ServiceLifecycleObserver {
 
 	/** The default value for the {@code serviceUrl} property. */
 	public static final String DEFAULT_SERVICE_URL = "http://localhost:8000";
