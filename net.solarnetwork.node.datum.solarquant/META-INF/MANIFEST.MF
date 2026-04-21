@@ -27,4 +27,5 @@ Import-Package:
  org.springframework.context.support;version="[6.2,7.0)",
  org.springframework.http;version="[6.2,7.0)",
  org.springframework.http.client;version="[6.2,7.0)",
- org.springframework.scheduling;version="[6.2,7.0)"
+ org.springframework.scheduling;version="[6.2,7.0)",
+ org.springframework.util;version="[6.2,7.0)"

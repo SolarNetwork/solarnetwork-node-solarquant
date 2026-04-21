@@ -118,8 +118,8 @@ public class SolarQuantService extends BaseIdentifiable
 	private final Set<String> publishedSourceIds = new CopyOnWriteArraySet<>();
 	private final TaskScheduler taskScheduler;
 	private final ObjectMapper objectMapper;
+	private final OptionalService<ClientHttpRequestFactory> httpRequestFactory;
 	private ScheduledFuture<?> flushTask;
-	private OptionalService<ClientHttpRequestFactory> httpRequestFactory;
 	private OptionalFilterableService<HttpRequestCustomizerService> httpRequestCustomizer;
 
 	/**
@@ -133,16 +133,21 @@ public class SolarQuantService extends BaseIdentifiable
 	 *        the task scheduler for periodic flushes
 	 * @param objectMapper
 	 *        the JSON object mapper
+	 * @param httpRequestFactory
+	 *        the HTTP request factory
 	 */
 	public SolarQuantService(DatumQueue datumQueue, IdentityService identityService,
-			TaskScheduler taskScheduler, ObjectMapper objectMapper) {
+			TaskScheduler taskScheduler, ObjectMapper objectMapper,
+			OptionalService<ClientHttpRequestFactory> httpRequestFactory) {
 		super();
 		this.datumQueue = datumQueue;
 		this.identityService = identityService;
 		this.taskScheduler = taskScheduler;
 		this.objectMapper = objectMapper;
+		this.httpRequestFactory = httpRequestFactory;
 	}
 
+	@Override
 	public synchronized void serviceDidStartup() {
 		compileSourceIdRegex();
 
@@ -156,6 +161,7 @@ public class SolarQuantService extends BaseIdentifiable
 		log.info("SolarQuant service started; forwarding to {}", serviceUrl);
 	}
 
+	@Override
 	public synchronized void serviceDidShutdown() {
 		datumQueue.removeConsumer(this);
 
@@ -171,6 +177,7 @@ public class SolarQuantService extends BaseIdentifiable
 		log.info("SolarQuant service stopped.");
 	}
 
+	@Override
 	public synchronized void configurationChanged(Map<String, Object> properties) {
 		serviceDidShutdown();
 		serviceDidStartup();
@@ -218,6 +225,8 @@ public class SolarQuantService extends BaseIdentifiable
 
 		final ClientHttpRequestFactory reqFactory = service(httpRequestFactory);
 		if ( reqFactory == null ) {
+			log.warn("HTTP request factory not available; discarding {} buffered datums",
+					batch.size());
 			return;
 		}
 
@@ -256,12 +265,12 @@ public class SolarQuantService extends BaseIdentifiable
 			}
 
 			try ( ClientHttpResponse response = req.execute() ) {
-				int status = response.getStatusCode().value();
 				String responseBody = new String(
 						response.getBody().readAllBytes(), StandardCharsets.UTF_8);
-				if ( status == 200 ) {
+				if ( response.getStatusCode().is2xxSuccessful() ) {
 					processMeasureResponse(responseBody, batch.size());
 				} else {
+					int status = response.getStatusCode().value();
 					lastStatusMessage = String.format("HTTP %d from %s/measure",
 							status, serviceUrl);
 					log.warn("SolarQuant service returned {}: {}", status, responseBody);
@@ -418,9 +427,9 @@ public class SolarQuantService extends BaseIdentifiable
 			}
 
 			try ( ClientHttpResponse response = req.execute() ) {
-				int httpStatus = response.getStatusCode().value();
-				if ( httpStatus != 200 ) {
-					return new PingTestResult(false, "HTTP " + httpStatus);
+				if ( !response.getStatusCode().is2xxSuccessful() ) {
+					return new PingTestResult(false,
+							"HTTP " + response.getStatusCode().value());
 				}
 				JsonNode root = objectMapper.readTree(response.getBody());
 				String status = root.has("status") ? root.get("status").asText() : "unknown";
@@ -606,77 +615,169 @@ public class SolarQuantService extends BaseIdentifiable
 		}
 	}
 
+	/**
+	 * Get the SolarQuant service URL.
+	 *
+	 * @return the service URL
+	 */
 	public String getServiceUrl() {
 		return serviceUrl;
 	}
 
+	/**
+	 * Set the SolarQuant service URL.
+	 *
+	 * @param serviceUrl
+	 *        the service URL to set
+	 */
 	public void setServiceUrl(String serviceUrl) {
 		this.serviceUrl = serviceUrl;
 	}
 
+	/**
+	 * Get the source ID regex used to match datums to forward.
+	 *
+	 * @return the source ID regex pattern
+	 */
 	public String getSourceIdRegexValue() {
 		return sourceIdRegexValue;
 	}
 
+	/**
+	 * Set the source ID regex used to match datums to forward.
+	 *
+	 * @param sourceIdRegexValue
+	 *        the source ID regex pattern to set
+	 */
 	public void setSourceIdRegexValue(String sourceIdRegexValue) {
 		this.sourceIdRegexValue = sourceIdRegexValue;
 		compileSourceIdRegex();
 	}
 
+	/**
+	 * Get the source ID prefix used when publishing prediction datums.
+	 *
+	 * @return the upload source ID prefix
+	 */
 	public String getUploadSourceId() {
 		return uploadSourceId;
 	}
 
+	/**
+	 * Set the source ID prefix used when publishing prediction datums.
+	 *
+	 * @param uploadSourceId
+	 *        the upload source ID prefix to set
+	 */
 	public void setUploadSourceId(String uploadSourceId) {
 		this.uploadSourceId = uploadSourceId;
 	}
 
+	/**
+	 * Get the Docker container image to manage.
+	 *
+	 * @return the container image, or an empty string to disable container
+	 *         management
+	 */
 	public String getContainerImage() {
 		return containerImage;
 	}
 
+	/**
+	 * Set the Docker container image to manage.
+	 *
+	 * @param containerImage
+	 *        the container image to set, or an empty string to disable
+	 *        container management
+	 */
 	public void setContainerImage(String containerImage) {
 		this.containerImage = containerImage;
 	}
 
+	/**
+	 * Get the Docker helper command path.
+	 *
+	 * @return the Docker command path
+	 */
 	public String getDockerCommand() {
 		return dockerCommand;
 	}
 
+	/**
+	 * Set the Docker helper command path.
+	 *
+	 * @param dockerCommand
+	 *        the Docker command path to set
+	 */
 	public void setDockerCommand(String dockerCommand) {
 		this.dockerCommand = dockerCommand;
 	}
 
+	/**
+	 * Get the datum flush interval, in seconds.
+	 *
+	 * @return the flush interval in seconds
+	 */
 	public int getFlushIntervalSecs() {
 		return flushIntervalSecs;
 	}
 
+	/**
+	 * Set the datum flush interval, in seconds.
+	 *
+	 * @param flushIntervalSecs
+	 *        the flush interval in seconds to set
+	 */
 	public void setFlushIntervalSecs(int flushIntervalSecs) {
 		this.flushIntervalSecs = flushIntervalSecs;
 	}
 
+	/**
+	 * Get the HTTP request factory.
+	 *
+	 * @return the HTTP request factory
+	 */
 	public OptionalService<ClientHttpRequestFactory> getHttpRequestFactory() {
 		return httpRequestFactory;
 	}
 
-	public void setHttpRequestFactory(OptionalService<ClientHttpRequestFactory> httpRequestFactory) {
-		this.httpRequestFactory = httpRequestFactory;
-	}
-
+	/**
+	 * Get the HTTP request customizer service.
+	 *
+	 * @return the HTTP request customizer service
+	 */
 	public OptionalFilterableService<HttpRequestCustomizerService> getHttpRequestCustomizer() {
 		return httpRequestCustomizer;
 	}
 
+	/**
+	 * Set the HTTP request customizer service.
+	 *
+	 * @param httpRequestCustomizer
+	 *        the HTTP request customizer service to set
+	 */
 	public void setHttpRequestCustomizer(
 			OptionalFilterableService<HttpRequestCustomizerService> httpRequestCustomizer) {
 		this.httpRequestCustomizer = httpRequestCustomizer;
 	}
 
+	/**
+	 * Get the UID of the HTTP request customizer service to use.
+	 *
+	 * @return the HTTP request customizer service UID, or {@literal null} if
+	 *         none configured
+	 */
 	public String getHttpRequestCustomizerUid() {
 		final OptionalFilterableService<HttpRequestCustomizerService> s = getHttpRequestCustomizer();
 		return (s != null ? s.getPropertyValue(UID_PROPERTY) : null);
 	}
 
+	/**
+	 * Set the UID of the HTTP request customizer service to use.
+	 *
+	 * @param uid
+	 *        the HTTP request customizer service UID to set
+	 */
 	public void setHttpRequestCustomizerUid(String uid) {
 		final OptionalFilterableService<HttpRequestCustomizerService> s = getHttpRequestCustomizer();
 		if ( s != null ) {

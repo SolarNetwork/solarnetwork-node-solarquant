@@ -32,7 +32,6 @@
 	<bean id="httpRequestFactory" class="net.solarnetwork.common.osgi.service.DynamicServiceTracker">
 		<argument ref="bundleContext"/>
 		<property name="serviceClassName" value="org.springframework.http.client.ClientHttpRequestFactory"/>
-		<property name="sticky" value="true"/>
 	</bean>
 
 	<!-- Services -->
@@ -70,8 +69,8 @@
 			<argument ref="identityService"/>
 			<argument ref="taskScheduler"/>
 			<argument ref="objectMapper"/>
+			<argument ref="httpRequestFactory"/>
 			<property name="messageSource" ref="messageSource"/>
-			<property name="httpRequestFactory" ref="httpRequestFactory"/>
 			<property name="httpRequestCustomizer">
 				<bean class="net.solarnetwork.common.osgi.service.DynamicServiceTracker">
 					<argument ref="bundleContext"/>
