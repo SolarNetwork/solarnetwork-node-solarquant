@@ -26,6 +26,12 @@ ${ivy.pom.header}
       <organization>SolarNetwork Foundation</organization>
       <organizationUrl>https://solarnetwork.org.nz</organizationUrl>
     </developer>
+    <developer>
+      <name>Thomas Passmore</name>
+      <email>thomas@ecosuite.io</email>
+      <organization>Ecosuite</organization>
+      <organizationUrl>https://ecosuite.io</organizationUrl>
+    </developer>
   </developers>
 
   <scm>
