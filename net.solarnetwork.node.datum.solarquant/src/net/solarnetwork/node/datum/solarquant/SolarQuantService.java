@@ -89,12 +89,6 @@ public class SolarQuantService extends BaseIdentifiable
 	/** The default value for the {@code serviceUrl} property. */
 	public static final String DEFAULT_SERVICE_URL = "http://localhost:8000";
 
-	/** The default value for the {@code sourceIdRegexValue} property. */
-	public static final String DEFAULT_SOURCE_ID_REGEX = ".*";
-
-	/** The default value for the {@code uploadSourceId} property. */
-	public static final String DEFAULT_UPLOAD_SOURCE_ID = "/solarquant";
-
 	/** The default value for the {@code dockerCommand} property. */
 	public static final String DEFAULT_DOCKER_COMMAND = solarNodeHome() + "/bin/solarquant";
 
@@ -105,21 +99,20 @@ public class SolarQuantService extends BaseIdentifiable
 
 	private final DatumQueue datumQueue;
 	private final IdentityService identityService;
-
-	private String serviceUrl = DEFAULT_SERVICE_URL;
-	private String sourceIdRegexValue = DEFAULT_SOURCE_ID_REGEX;
-	private String uploadSourceId = DEFAULT_UPLOAD_SOURCE_ID;
-	private String containerImage = "";
-	private String dockerCommand = DEFAULT_DOCKER_COMMAND;
-	private int flushIntervalSecs = DEFAULT_FLUSH_INTERVAL_SECS;
-
-	private volatile Pattern sourceIdRegex;
-	private volatile String lastStatusMessage;
-	private final ConcurrentLinkedQueue<NodeDatum> datumBuffer = new ConcurrentLinkedQueue<>();
-	private final Set<String> publishedSourceIds = new CopyOnWriteArraySet<>();
 	private final TaskScheduler taskScheduler;
 	private final ObjectMapper objectMapper;
 	private final OptionalService<ClientHttpRequestFactory> httpRequestFactory;
+
+	private String serviceUrl = DEFAULT_SERVICE_URL;
+	private Pattern sourceIdRegex;
+	private String uploadSourceId;
+	private String containerImage;
+	private String dockerCommand = DEFAULT_DOCKER_COMMAND;
+	private int flushIntervalSecs = DEFAULT_FLUSH_INTERVAL_SECS;
+
+	private volatile String lastStatusMessage;
+	private final ConcurrentLinkedQueue<NodeDatum> datumBuffer = new ConcurrentLinkedQueue<>();
+	private final Set<String> publishedSourceIds = new CopyOnWriteArraySet<>();
 	private ScheduledFuture<?> flushTask;
 	private OptionalFilterableService<HttpRequestCustomizerService> httpRequestCustomizer;
 
@@ -150,8 +143,6 @@ public class SolarQuantService extends BaseIdentifiable
 
 	@Override
 	public synchronized void serviceDidStartup() {
-		compileSourceIdRegex();
-
 		startContainer();
 
 		Duration period = Duration.ofSeconds(flushIntervalSecs);
@@ -467,17 +458,22 @@ public class SolarQuantService extends BaseIdentifiable
 
 		results.addAll(baseIdentifiableSettings(""));
 
-		results.add(new BasicTextFieldSettingSpecifier("containerImage", ""));
+		results.add(new BasicTextFieldSettingSpecifier("containerImage", null));
 		results.add(new BasicTextFieldSettingSpecifier("serviceUrl", DEFAULT_SERVICE_URL));
-		results.add(new BasicTextFieldSettingSpecifier("sourceIdRegexValue", DEFAULT_SOURCE_ID_REGEX));
-		results.add(new BasicTextFieldSettingSpecifier("uploadSourceId", DEFAULT_UPLOAD_SOURCE_ID));
+		results.add(new BasicTextFieldSettingSpecifier("sourceIdRegexValue", null));
+		results.add(new BasicTextFieldSettingSpecifier("uploadSourceId", null));
 		results.add(new BasicTextFieldSettingSpecifier("flushIntervalSecs",
 				String.valueOf(DEFAULT_FLUSH_INTERVAL_SECS)));
 		results.add(new BasicTextFieldSettingSpecifier("dockerCommand", DEFAULT_DOCKER_COMMAND));
 		results.add(new BasicTextFieldSettingSpecifier("httpRequestCustomizerUid", null, false,
-				"(objectClass=net.solarnetwork.web.service.HttpRequestCustomizerService)"));
+				"(objectClass=net.solarnetwork.web.jakarta.service.HttpRequestCustomizerService)"));
 
 		return results;
+	}
+
+	private boolean isConfigured() {
+		return (containerImage != null && !containerImage.isEmpty() && sourceIdRegex != null
+				&& serviceUrl != null && !serviceUrl.isEmpty());
 	}
 
 	private String statusMessage() {
@@ -496,7 +492,7 @@ public class SolarQuantService extends BaseIdentifiable
 
 	private void startContainer() {
 		final String image = containerImage;
-		if ( image == null || image.isEmpty() ) {
+		if ( image == null || image.isEmpty() || !isConfigured() ) {
 			return;
 		}
 
@@ -594,20 +590,6 @@ public class SolarQuantService extends BaseIdentifiable
 		}
 	}
 
-	private void compileSourceIdRegex() {
-		String val = sourceIdRegexValue;
-		if ( val == null || val.isEmpty() ) {
-			sourceIdRegex = null;
-		} else {
-			try {
-				sourceIdRegex = Pattern.compile(val);
-			} catch ( PatternSyntaxException e ) {
-				log.warn("Invalid source ID regex [{}]: {}", val, e.getMessage());
-				sourceIdRegex = null;
-			}
-		}
-	}
-
 	/**
 	 * Get the SolarQuant service URL.
 	 *
@@ -633,7 +615,7 @@ public class SolarQuantService extends BaseIdentifiable
 	 * @return the source ID regex pattern
 	 */
 	public String getSourceIdRegexValue() {
-		return sourceIdRegexValue;
+		return (sourceIdRegex != null ? sourceIdRegex.pattern() : null);
 	}
 
 	/**
@@ -643,8 +625,16 @@ public class SolarQuantService extends BaseIdentifiable
 	 *        the source ID regex pattern to set
 	 */
 	public void setSourceIdRegexValue(String sourceIdRegexValue) {
-		this.sourceIdRegexValue = sourceIdRegexValue;
-		compileSourceIdRegex();
+		if ( sourceIdRegexValue == null || sourceIdRegexValue.isEmpty() ) {
+			sourceIdRegex = null;
+		} else {
+			try {
+				sourceIdRegex = Pattern.compile(sourceIdRegexValue);
+			} catch ( PatternSyntaxException e ) {
+				log.warn("Invalid source ID regex [{}]: {}", sourceIdRegexValue, e.getMessage());
+				sourceIdRegex = null;
+			}
+		}
 	}
 
 	/**
@@ -660,7 +650,8 @@ public class SolarQuantService extends BaseIdentifiable
 	 * Set the source ID prefix used when publishing prediction datums.
 	 *
 	 * @param uploadSourceId
-	 *        the upload source ID prefix to set
+	 *        the upload source ID prefix to set, or {@code null} to not upload
+	 *        datum
 	 */
 	public void setUploadSourceId(String uploadSourceId) {
 		this.uploadSourceId = uploadSourceId;
@@ -700,10 +691,11 @@ public class SolarQuantService extends BaseIdentifiable
 	 * Set the Docker helper command path.
 	 *
 	 * @param dockerCommand
-	 *        the Docker command path to set
+	 *        the Docker command path to set; if {@code null} then
+	 *        {@link #DEFAULT_DOCKER_COMMAND} will be used
 	 */
 	public void setDockerCommand(String dockerCommand) {
-		this.dockerCommand = dockerCommand;
+		this.dockerCommand = (dockerCommand != null ? dockerCommand : DEFAULT_DOCKER_COMMAND);
 	}
 
 	/**
