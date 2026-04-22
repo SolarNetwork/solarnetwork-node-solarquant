@@ -199,7 +199,7 @@ public class SolarQuantService extends BaseIdentifiable
 		}
 
 		final Pattern regex = sourceIdRegex;
-		if ( regex != null && !regex.matcher(datum.getSourceId()).matches() ) {
+		if ( regex != null && !regex.matcher(datum.getSourceId()).find() ) {
 			return;
 		}
 
@@ -676,7 +676,7 @@ public class SolarQuantService extends BaseIdentifiable
 			sourceIdRegex = null;
 		} else {
 			try {
-				sourceIdRegex = Pattern.compile(sourceIdRegexValue);
+				sourceIdRegex = Pattern.compile(sourceIdRegexValue, Pattern.CASE_INSENSITIVE);
 			} catch ( PatternSyntaxException e ) {
 				log.warn("Invalid source ID regex [{}]: {}", sourceIdRegexValue, e.getMessage());
 				sourceIdRegex = null;
