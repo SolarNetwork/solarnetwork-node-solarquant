@@ -176,6 +176,7 @@ public class SolarQuantService extends BaseIdentifiable
 	@Override
 	public synchronized void configurationChanged(Map<String, Object> properties) {
 		serviceDidShutdown();
+		publishedSourceIds.clear();
 		serviceDidStartup();
 	}
 
@@ -200,7 +201,14 @@ public class SolarQuantService extends BaseIdentifiable
 
 	@Override
 	public Collection<String> publishedSourceIds() {
-		return publishedSourceIds;
+		final String uploadSourceId = this.uploadSourceId;
+		if ( !isConfigured() || uploadSourceId == null || uploadSourceId.isEmpty() ) {
+			return Set.of();
+		}
+		// if we haven't published any source IDs yet, return the uploadSourceId directly
+		// so we appear in the calling service as _something_
+		List<String> sourceIds = new ArrayList<>(publishedSourceIds);
+		return (sourceIds.isEmpty() ? Set.of(uploadSourceId) : sourceIds);
 	}
 
 	private void flushDatums() {
