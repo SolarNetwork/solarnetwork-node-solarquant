@@ -112,6 +112,8 @@ public class SolarQuantService extends BaseIdentifiable
 	private int flushIntervalSecs = DEFAULT_FLUSH_INTERVAL_SECS;
 
 	private volatile String lastStatusMessage;
+	private volatile String activeContainerName;
+	private volatile String activeServiceUrl;
 	private final ConcurrentLinkedQueue<NodeDatum> datumBuffer = new ConcurrentLinkedQueue<>();
 	private final Set<String> publishedSourceIds = new CopyOnWriteArraySet<>();
 	private ScheduledFuture<?> flushTask;
@@ -148,6 +150,11 @@ public class SolarQuantService extends BaseIdentifiable
 			return;
 		}
 		startContainer();
+
+		final String serviceUrl = activeServiceUrl;
+		if ( serviceUrl == null || serviceUrl.isEmpty() ) {
+			return;
+		}
 
 		Duration period = Duration.ofSeconds(flushIntervalSecs);
 		flushTask = taskScheduler.scheduleAtFixedRate(this::flushDatums, Instant.now().plus(period),
@@ -230,6 +237,12 @@ public class SolarQuantService extends BaseIdentifiable
 		final ClientHttpRequestFactory reqFactory = service(httpRequestFactory);
 		if ( reqFactory == null ) {
 			log.warn("HTTP request factory not available; discarding {} buffered datums", batch.size());
+			return;
+		}
+
+		final String serviceUrl = activeServiceUrl;
+		if ( serviceUrl == null ) {
+			log.warn("Service not configured; discarding {} buffered datums", batch.size());
 			return;
 		}
 
@@ -320,7 +333,15 @@ public class SolarQuantService extends BaseIdentifiable
 				return;
 			}
 
-			final String base = uploadSourceId != null ? uploadSourceId : "";
+			final String base = uploadSourceId;
+			if ( base == null || base.isEmpty() ) {
+				lastStatusMessage = String.format("Sent %d, accepted %d; %d predictions discarded",
+						sentCount, accepted, predictions.size());
+				log.debug("Flushed {} datums to SolarQuant; {} accepted, %d predictions discarded",
+						sentCount, accepted, predictions.size());
+				return;
+			}
+
 			int predCount = 0;
 
 			for ( JsonNode pred : predictions ) {
@@ -410,14 +431,20 @@ public class SolarQuantService extends BaseIdentifiable
 
 	@Override
 	public Result performPingTest() throws Exception {
-		final ClientHttpRequestFactory reqFactory = service(httpRequestFactory);
-		if ( reqFactory == null ) {
-			return new PingTestResult(false, "Service not started");
+		final String serviceUrl = activeServiceUrl;
+		if ( !isConfigured() || serviceUrl == null || serviceUrl.isEmpty() ) {
+			return new PingTestResult(true, "Service not configured.");
 		}
 
-		if ( containerImage != null && !containerImage.isEmpty() ) {
+		final ClientHttpRequestFactory reqFactory = service(httpRequestFactory);
+		if ( reqFactory == null ) {
+			return new PingTestResult(false, "HTTP request factory service not available.");
+		}
+
+		final String containerName = activeContainerName;
+		if ( containerName != null && !containerName.isEmpty() ) {
 			if ( !isContainerRunning() ) {
-				return new PingTestResult(false, "Container not running");
+				return new PingTestResult(false, "Container [%s] not running.".formatted(containerName));
 			}
 		}
 
@@ -489,8 +516,7 @@ public class SolarQuantService extends BaseIdentifiable
 	}
 
 	private boolean isConfigured() {
-		return (containerImage != null && !containerImage.isEmpty() && sourceIdRegex != null
-				&& serviceUrl != null && !serviceUrl.isEmpty());
+		return (sourceIdRegex != null && serviceUrl != null && !serviceUrl.isEmpty());
 	}
 
 	private String statusMessage() {
@@ -509,12 +535,14 @@ public class SolarQuantService extends BaseIdentifiable
 
 	private void startContainer() {
 		final String image = containerImage;
-		if ( image == null || image.isEmpty() || !isConfigured() ) {
+		if ( image == null || image.isEmpty() ) {
+			activeServiceUrl = serviceUrl;
 			return;
 		}
+		final String containerName = containerName();
 
 		try {
-			String[] cmd = { dockerCommand, "start", image, containerName() };
+			String[] cmd = { dockerCommand, "start", image, containerName };
 			ProcessBuilder pb = new ProcessBuilder(cmd);
 			pb.redirectErrorStream(false);
 			Process pr = pb.start();
@@ -535,11 +563,13 @@ public class SolarQuantService extends BaseIdentifiable
 
 			int exitCode = pr.waitFor();
 			if ( exitCode == 0 && port != null && !port.isBlank() ) {
-				serviceUrl = "http://localhost:" + port.trim();
-				log.info("Started container {} on port {}; serviceUrl = {}", containerName(),
-						port.trim(), serviceUrl);
+				String serviceUrl = "http://localhost:" + port.trim();
+				activeServiceUrl = serviceUrl;
+				activeContainerName = containerName;
+				log.info("Started container {} on port {}; serviceUrl = {}", containerName, port.trim(),
+						serviceUrl);
 			} else {
-				log.error("Failed to start container {} (exit {})", containerName(), exitCode);
+				log.error("Failed to start container {} (exit {})", containerName, exitCode);
 			}
 		} catch ( IOException e ) {
 			log.error("Error starting Docker container: {}", e.getMessage());
@@ -549,13 +579,13 @@ public class SolarQuantService extends BaseIdentifiable
 	}
 
 	private void stopContainer() {
-		final String image = containerImage;
-		if ( image == null || image.isEmpty() ) {
+		final String containerName = activeContainerName;
+		if ( containerName == null || containerName.isEmpty() ) {
 			return;
 		}
 
 		try {
-			String[] cmd = { dockerCommand, "stop", containerName() };
+			String[] cmd = { dockerCommand, "stop", containerName };
 			ProcessBuilder pb = new ProcessBuilder(cmd);
 			pb.redirectErrorStream(true);
 			Process pr = pb.start();
@@ -570,9 +600,9 @@ public class SolarQuantService extends BaseIdentifiable
 
 			int exitCode = pr.waitFor();
 			if ( exitCode == 0 ) {
-				log.info("Stopped container {}", containerName());
+				log.info("Stopped container {}", containerName);
 			} else {
-				log.warn("Failed to stop container {} (exit {})", containerName(), exitCode);
+				log.warn("Failed to stop container {} (exit {})", containerName, exitCode);
 			}
 		} catch ( IOException e ) {
 			log.error("Error stopping Docker container: {}", e.getMessage());
@@ -582,13 +612,13 @@ public class SolarQuantService extends BaseIdentifiable
 	}
 
 	private boolean isContainerRunning() {
-		final String image = containerImage;
-		if ( image == null || image.isEmpty() ) {
+		final String containerName = activeContainerName;
+		if ( containerName == null || containerName.isEmpty() ) {
 			return true; // not managing container, assume service is external
 		}
 
 		try {
-			String[] cmd = { dockerCommand, "status", containerName() };
+			String[] cmd = { dockerCommand, "status", containerName };
 			ProcessBuilder pb = new ProcessBuilder(cmd);
 			pb.redirectErrorStream(true);
 			Process pr = pb.start();
