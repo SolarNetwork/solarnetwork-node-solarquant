@@ -38,6 +38,7 @@ import java.util.HashMap;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.Objects;
 import java.util.Set;
 import java.util.concurrent.ConcurrentLinkedQueue;
 import java.util.concurrent.CopyOnWriteArraySet;
@@ -386,7 +387,12 @@ public class SolarQuantService extends BaseIdentifiable
 
 	@Override
 	public String getPingTestId() {
-		return getUid();
+		String settingUid = getSettingUid();
+		Object ident = getUid();
+		if ( ident == null ) {
+			ident = Integer.toUnsignedString(Objects.hashCode(this), 16);
+		}
+		return String.format("%s-%s", settingUid, ident);
 	}
 
 	@Override
