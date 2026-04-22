@@ -143,6 +143,9 @@ public class SolarQuantService extends BaseIdentifiable
 
 	@Override
 	public synchronized void serviceDidStartup() {
+		if ( !isConfigured() ) {
+			return;
+		}
 		startContainer();
 
 		Duration period = Duration.ofSeconds(flushIntervalSecs);
