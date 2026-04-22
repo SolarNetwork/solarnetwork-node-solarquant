@@ -22,6 +22,7 @@
 
 package net.solarnetwork.node.datum.solarquant;
 
+import static net.solarnetwork.node.Constants.solarNodeHome;
 import static net.solarnetwork.service.OptionalService.service;
 import java.io.BufferedReader;
 import java.io.IOException;
@@ -95,7 +96,7 @@ public class SolarQuantService extends BaseIdentifiable
 	public static final String DEFAULT_UPLOAD_SOURCE_ID = "/solarquant";
 
 	/** The default value for the {@code dockerCommand} property. */
-	public static final String DEFAULT_DOCKER_COMMAND = "/opt/solarnode/bin/solarquant";
+	public static final String DEFAULT_DOCKER_COMMAND = solarNodeHome() + "/bin/solarquant";
 
 	/** The default value for the {@code flushIntervalSecs} property. */
 	public static final int DEFAULT_FLUSH_INTERVAL_SECS = 60;
@@ -154,8 +155,8 @@ public class SolarQuantService extends BaseIdentifiable
 		startContainer();
 
 		Duration period = Duration.ofSeconds(flushIntervalSecs);
-		flushTask = taskScheduler.scheduleAtFixedRate(this::flushDatums,
-				Instant.now().plus(period), period);
+		flushTask = taskScheduler.scheduleAtFixedRate(this::flushDatums, Instant.now().plus(period),
+				period);
 
 		datumQueue.addConsumer(this);
 		log.info("SolarQuant service started; forwarding to {}", serviceUrl);
@@ -225,8 +226,7 @@ public class SolarQuantService extends BaseIdentifiable
 
 		final ClientHttpRequestFactory reqFactory = service(httpRequestFactory);
 		if ( reqFactory == null ) {
-			log.warn("HTTP request factory not available; discarding {} buffered datums",
-					batch.size());
+			log.warn("HTTP request factory not available; discarding {} buffered datums", batch.size());
 			return;
 		}
 
@@ -251,8 +251,8 @@ public class SolarQuantService extends BaseIdentifiable
 			byte[] json = objectMapper.writeValueAsBytes(Map.of("datums", datumsList));
 			ByteList body = new ByteList(json);
 
-			ClientHttpRequest req = reqFactory.createRequest(
-					URI.create(serviceUrl + "/measure"), HttpMethod.POST);
+			ClientHttpRequest req = reqFactory.createRequest(URI.create(serviceUrl + "/measure"),
+					HttpMethod.POST);
 			req.getHeaders().setContentType(MediaType.APPLICATION_JSON);
 			req.getHeaders().setAccept(List.of(MediaType.APPLICATION_JSON));
 
@@ -264,22 +264,21 @@ public class SolarQuantService extends BaseIdentifiable
 				req.getBody().write(body.toArrayValue());
 			}
 
-			try ( ClientHttpResponse response = req.execute() ) {
-				String responseBody = new String(
-						response.getBody().readAllBytes(), StandardCharsets.UTF_8);
+			try (ClientHttpResponse response = req.execute()) {
+				String responseBody = new String(response.getBody().readAllBytes(),
+						StandardCharsets.UTF_8);
 				if ( response.getStatusCode().is2xxSuccessful() ) {
 					processMeasureResponse(responseBody, batch.size());
 				} else {
 					int status = response.getStatusCode().value();
-					lastStatusMessage = String.format("HTTP %d from %s/measure",
-							status, serviceUrl);
+					lastStatusMessage = String.format("HTTP %d from %s/measure", status, serviceUrl);
 					log.warn("SolarQuant service returned {}: {}", status, responseBody);
 				}
 			}
 		} catch ( IOException e ) {
 			lastStatusMessage = "Error: " + e.getMessage();
-			log.error("Error forwarding {} datums to SolarQuant service at {}: {}",
-					batch.size(), serviceUrl, e.getMessage());
+			log.error("Error forwarding {} datums to SolarQuant service at {}: {}", batch.size(),
+					serviceUrl, e.getMessage());
 		} catch ( Exception e ) {
 			lastStatusMessage = "Error: " + e.getMessage();
 			log.error("Unexpected error flushing datums to SolarQuant service", e);
@@ -296,8 +295,8 @@ public class SolarQuantService extends BaseIdentifiable
 		return Collections.emptyMap();
 	}
 
-	private void addSampleData(Map<String, Object> dm, String key,
-			DatumSamplesOperations ops, DatumSamplesType type) {
+	private void addSampleData(Map<String, Object> dm, String key, DatumSamplesOperations ops,
+			DatumSamplesType type) {
 		Map<String, ?> data = ops.getSampleData(type);
 		if ( data != null && !data.isEmpty() ) {
 			dm.put(key, data);
@@ -311,10 +310,10 @@ public class SolarQuantService extends BaseIdentifiable
 
 			JsonNode predictions = root.get("predictions");
 			if ( predictions == null || !predictions.isArray() || predictions.isEmpty() ) {
-				lastStatusMessage = String.format("Sent %d, accepted %d; no predictions",
-						sentCount, accepted);
-				log.debug("Flushed {} datums to SolarQuant; {} accepted, no predictions",
-						sentCount, accepted);
+				lastStatusMessage = String.format("Sent %d, accepted %d; no predictions", sentCount,
+						accepted);
+				log.debug("Flushed {} datums to SolarQuant; {} accepted, no predictions", sentCount,
+						accepted);
 				return;
 			}
 
@@ -342,8 +341,7 @@ public class SolarQuantService extends BaseIdentifiable
 				if ( iNode != null && iNode.isObject() ) {
 					for ( Map.Entry<String, JsonNode> e : iNode.properties() ) {
 						if ( e.getValue().isNumber() ) {
-							samples.putInstantaneousSampleValue(
-									e.getKey(), e.getValue().numberValue());
+							samples.putInstantaneousSampleValue(e.getKey(), e.getValue().numberValue());
 						}
 					}
 				}
@@ -362,11 +360,10 @@ public class SolarQuantService extends BaseIdentifiable
 							continue;
 						}
 						if ( e.getValue().isNumber() ) {
-							samples.putInstantaneousSampleValue(
-									"meta_" + key, e.getValue().numberValue());
+							samples.putInstantaneousSampleValue("meta_" + key,
+									e.getValue().numberValue());
 						} else {
-							samples.putStatusSampleValue(
-									"meta_" + key, e.getValue().asText());
+							samples.putStatusSampleValue("meta_" + key, e.getValue().asText());
 						}
 					}
 				}
@@ -377,10 +374,10 @@ public class SolarQuantService extends BaseIdentifiable
 				predCount++;
 			}
 
-			lastStatusMessage = String.format("Sent %d, accepted %d; %d predictions",
-					sentCount, accepted, predCount);
-			log.info("Flushed {} datums to SolarQuant; {} accepted, {} predictions posted",
-					sentCount, accepted, predCount);
+			lastStatusMessage = String.format("Sent %d, accepted %d; %d predictions", sentCount,
+					accepted, predCount);
+			log.info("Flushed {} datums to SolarQuant; {} accepted, {} predictions posted", sentCount,
+					accepted, predCount);
 
 		} catch ( Exception e ) {
 			lastStatusMessage = "Error parsing response: " + e.getMessage();
@@ -417,8 +414,8 @@ public class SolarQuantService extends BaseIdentifiable
 		}
 
 		try {
-			ClientHttpRequest req = reqFactory.createRequest(
-					URI.create(serviceUrl + "/health"), HttpMethod.GET);
+			ClientHttpRequest req = reqFactory.createRequest(URI.create(serviceUrl + "/health"),
+					HttpMethod.GET);
 			req.getHeaders().setAccept(List.of(MediaType.APPLICATION_JSON));
 
 			HttpRequestCustomizerService cust = service(httpRequestCustomizer);
@@ -426,10 +423,9 @@ public class SolarQuantService extends BaseIdentifiable
 				req = cust.apply(reqFactory, req, new ByteList(), customizerParameters());
 			}
 
-			try ( ClientHttpResponse response = req.execute() ) {
+			try (ClientHttpResponse response = req.execute()) {
 				if ( !response.getStatusCode().is2xxSuccessful() ) {
-					return new PingTestResult(false,
-							"HTTP " + response.getStatusCode().value());
+					return new PingTestResult(false, "HTTP " + response.getStatusCode().value());
 				}
 				JsonNode root = objectMapper.readTree(response.getBody());
 				String status = root.has("status") ? root.get("status").asText() : "unknown";
@@ -473,14 +469,11 @@ public class SolarQuantService extends BaseIdentifiable
 
 		results.add(new BasicTextFieldSettingSpecifier("containerImage", ""));
 		results.add(new BasicTextFieldSettingSpecifier("serviceUrl", DEFAULT_SERVICE_URL));
-		results.add(new BasicTextFieldSettingSpecifier("sourceIdRegexValue",
-				DEFAULT_SOURCE_ID_REGEX));
-		results.add(new BasicTextFieldSettingSpecifier("uploadSourceId",
-				DEFAULT_UPLOAD_SOURCE_ID));
+		results.add(new BasicTextFieldSettingSpecifier("sourceIdRegexValue", DEFAULT_SOURCE_ID_REGEX));
+		results.add(new BasicTextFieldSettingSpecifier("uploadSourceId", DEFAULT_UPLOAD_SOURCE_ID));
 		results.add(new BasicTextFieldSettingSpecifier("flushIntervalSecs",
 				String.valueOf(DEFAULT_FLUSH_INTERVAL_SECS)));
-		results.add(new BasicTextFieldSettingSpecifier("dockerCommand",
-				DEFAULT_DOCKER_COMMAND));
+		results.add(new BasicTextFieldSettingSpecifier("dockerCommand", DEFAULT_DOCKER_COMMAND));
 		results.add(new BasicTextFieldSettingSpecifier("httpRequestCustomizerUid", null, false,
 				"(objectClass=net.solarnetwork.web.service.HttpRequestCustomizerService)"));
 
@@ -514,13 +507,13 @@ public class SolarQuantService extends BaseIdentifiable
 			Process pr = pb.start();
 
 			String port;
-			try ( BufferedReader reader = new BufferedReader(
-					new InputStreamReader(pr.getInputStream())) ) {
+			try (BufferedReader reader = new BufferedReader(
+					new InputStreamReader(pr.getInputStream()))) {
 				port = reader.readLine();
 			}
 
-			try ( BufferedReader errReader = new BufferedReader(
-					new InputStreamReader(pr.getErrorStream())) ) {
+			try (BufferedReader errReader = new BufferedReader(
+					new InputStreamReader(pr.getErrorStream()))) {
 				String line;
 				while ( (line = errReader.readLine()) != null ) {
 					log.debug("solarquant start: {}", line);
@@ -530,8 +523,8 @@ public class SolarQuantService extends BaseIdentifiable
 			int exitCode = pr.waitFor();
 			if ( exitCode == 0 && port != null && !port.isBlank() ) {
 				serviceUrl = "http://localhost:" + port.trim();
-				log.info("Started container {} on port {}; serviceUrl = {}",
-						containerName(), port.trim(), serviceUrl);
+				log.info("Started container {} on port {}; serviceUrl = {}", containerName(),
+						port.trim(), serviceUrl);
 			} else {
 				log.error("Failed to start container {} (exit {})", containerName(), exitCode);
 			}
@@ -554,8 +547,8 @@ public class SolarQuantService extends BaseIdentifiable
 			pb.redirectErrorStream(true);
 			Process pr = pb.start();
 
-			try ( BufferedReader reader = new BufferedReader(
-					new InputStreamReader(pr.getInputStream())) ) {
+			try (BufferedReader reader = new BufferedReader(
+					new InputStreamReader(pr.getInputStream()))) {
 				String line;
 				while ( (line = reader.readLine()) != null ) {
 					log.debug("solarquant stop: {}", line);
@@ -588,8 +581,8 @@ public class SolarQuantService extends BaseIdentifiable
 			Process pr = pb.start();
 
 			String output;
-			try ( BufferedReader reader = new BufferedReader(
-					new InputStreamReader(pr.getInputStream())) ) {
+			try (BufferedReader reader = new BufferedReader(
+					new InputStreamReader(pr.getInputStream()))) {
 				output = reader.readLine();
 			}
 
