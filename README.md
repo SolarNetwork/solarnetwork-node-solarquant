@@ -57,9 +57,11 @@ from 1.
 For example, a **Source Match** `/x/(d+)` with **Replacement** `/y/{1}` would map an input source ID
 `/x/123` to `/y/123`.
 
+## Docker Command
 
-
-The plugin calls an external script to manage containers. Install `net.solarnetwork.node.datum.solarquant/def/solarquant.sh` to the SolarNode bin directory -- see `net.solarnetwork.node.datum.solarquant/def/README.md`.
+The plugin calls an external command to manage containers. Install
+`net.solarnetwork.node.datum.solarquant/def/solarquant.sh` to the SolarNode bin directory -- see
+`net.solarnetwork.node.datum.solarquant/def/README.md`.
 
 ## Protocol
 
