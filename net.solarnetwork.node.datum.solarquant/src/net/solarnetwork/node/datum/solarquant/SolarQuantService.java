@@ -553,23 +553,30 @@ public class SolarQuantService extends BaseIdentifiable
 				port = reader.readLine();
 			}
 
+			StringBuilder errMsg = new StringBuilder();
 			try (BufferedReader errReader = new BufferedReader(
 					new InputStreamReader(pr.getErrorStream()))) {
 				String line;
 				while ( (line = errReader.readLine()) != null ) {
-					log.debug("solarquant start: {}", line);
+					if ( !errMsg.isEmpty() ) {
+						errMsg.append(System.lineSeparator());
+					}
+					errMsg.append(line);
 				}
 			}
 
 			int exitCode = pr.waitFor();
 			if ( exitCode == 0 && port != null && !port.isBlank() ) {
+				if ( log.isDebugEnabled() && !errMsg.isEmpty() ) {
+					log.debug("solarquant start stderr: {}", errMsg);
+				}
 				String serviceUrl = "http://localhost:" + port.trim();
 				activeServiceUrl = serviceUrl;
 				activeContainerName = containerName;
 				log.info("Started container {} on port {}; serviceUrl = {}", containerName, port.trim(),
 						serviceUrl);
 			} else {
-				log.error("Failed to start container {} (exit {})", containerName, exitCode);
+				log.error("Failed to start container {} (exit {}): {}", containerName, exitCode, errMsg);
 			}
 		} catch ( IOException e ) {
 			log.error("Error starting Docker container: {}", e.getMessage());
