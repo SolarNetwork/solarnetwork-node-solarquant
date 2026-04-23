@@ -22,6 +22,9 @@
 
 package net.solarnetwork.node.datum.solarquant;
 
+import static java.util.Arrays.asList;
+import static java.util.Collections.emptyList;
+import static java.util.Collections.singletonList;
 import static net.solarnetwork.node.Constants.solarNodeHome;
 import static net.solarnetwork.service.OptionalService.service;
 import java.io.BufferedReader;
@@ -40,7 +43,9 @@ import java.util.List;
 import java.util.Map;
 import java.util.Objects;
 import java.util.Set;
+import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.ConcurrentLinkedQueue;
+import java.util.concurrent.ConcurrentMap;
 import java.util.concurrent.CopyOnWriteArraySet;
 import java.util.concurrent.ScheduledFuture;
 import java.util.function.Consumer;
@@ -72,8 +77,11 @@ import net.solarnetwork.service.ServiceLifecycleObserver;
 import net.solarnetwork.settings.SettingSpecifier;
 import net.solarnetwork.settings.SettingSpecifierProvider;
 import net.solarnetwork.settings.SettingsChangeObserver;
+import net.solarnetwork.settings.support.BasicGroupSettingSpecifier;
 import net.solarnetwork.settings.support.BasicTextFieldSettingSpecifier;
 import net.solarnetwork.settings.support.BasicTitleSettingSpecifier;
+import net.solarnetwork.settings.support.SettingUtils;
+import net.solarnetwork.util.ArrayUtils;
 import net.solarnetwork.util.ByteList;
 import net.solarnetwork.web.jakarta.service.HttpRequestCustomizerService;
 
@@ -110,12 +118,15 @@ public class SolarQuantService extends BaseIdentifiable
 	private String containerImage;
 	private String dockerCommand = DEFAULT_DOCKER_COMMAND;
 	private int flushIntervalSecs = DEFAULT_FLUSH_INTERVAL_SECS;
+	private Long manualNodeId;
+	private SourcePatternMapping[] sourceMappings;
 
 	private volatile String lastStatusMessage;
 	private volatile String activeContainerName;
 	private volatile String activeServiceUrl;
 	private final ConcurrentLinkedQueue<NodeDatum> datumBuffer = new ConcurrentLinkedQueue<>();
 	private final Set<String> publishedSourceIds = new CopyOnWriteArraySet<>();
+	private final ConcurrentMap<String, String> mappedSourceIdCache = new ConcurrentHashMap<>(8);
 	private ScheduledFuture<?> flushTask;
 	private OptionalFilterableService<HttpRequestCustomizerService> httpRequestCustomizer;
 
@@ -184,6 +195,7 @@ public class SolarQuantService extends BaseIdentifiable
 	public synchronized void configurationChanged(Map<String, Object> properties) {
 		serviceDidShutdown();
 		publishedSourceIds.clear();
+		mappedSourceIdCache.clear();
 		serviceDidStartup();
 	}
 
@@ -228,7 +240,8 @@ public class SolarQuantService extends BaseIdentifiable
 			return;
 		}
 
-		final Long nodeId = (identityService != null ? identityService.getNodeId() : null);
+		final Long nodeId = (manualNodeId != null ? manualNodeId
+				: identityService != null ? identityService.getNodeId() : null);
 		if ( nodeId == null ) {
 			log.warn("Node ID not available; discarding {} buffered datums", batch.size());
 			return;
@@ -249,9 +262,11 @@ public class SolarQuantService extends BaseIdentifiable
 		try {
 			List<Map<String, Object>> datumsList = new ArrayList<>(batch.size());
 			for ( NodeDatum datum : batch ) {
+				final String sourceId = mappedSourceIdCache.computeIfAbsent(datum.getSourceId(),
+						s -> SourcePatternMapping.resolveSourceId(s, sourceMappings));
 				Map<String, Object> dm = new LinkedHashMap<>();
 				dm.put("nodeId", nodeId);
-				dm.put("sourceId", datum.getSourceId());
+				dm.put("sourceId", sourceId);
 				dm.put("timestamp", datum.getTimestamp().getEpochSecond());
 
 				DatumSamplesOperations ops = datum.asSampleOperations();
@@ -496,6 +511,15 @@ public class SolarQuantService extends BaseIdentifiable
 
 	@Override
 	public List<SettingSpecifier> getSettingSpecifiers() {
+		return settingSpecifiers(false);
+	}
+
+	@Override
+	public List<SettingSpecifier> templateSettingSpecifiers() {
+		return settingSpecifiers(true);
+	}
+
+	private List<SettingSpecifier> settingSpecifiers(final boolean template) {
 		final List<SettingSpecifier> results = new ArrayList<>(12);
 
 		results.add(new BasicTitleSettingSpecifier("status", statusMessage(), true, true));
@@ -511,6 +535,23 @@ public class SolarQuantService extends BaseIdentifiable
 		results.add(new BasicTextFieldSettingSpecifier("dockerCommand", DEFAULT_DOCKER_COMMAND));
 		results.add(new BasicTextFieldSettingSpecifier("httpRequestCustomizerUid", null, false,
 				"(objectClass=net.solarnetwork.web.jakarta.service.HttpRequestCustomizerService)"));
+		results.add(new BasicTextFieldSettingSpecifier("manualNodeIdValue", null));
+
+		SourcePatternMapping[] mappingConfs = getSourceMappings();
+		List<SourcePatternMapping> mappingConfList = (template
+				? singletonList(new SourcePatternMapping())
+				: (mappingConfs != null ? asList(mappingConfs) : emptyList()));
+		results.add(SettingUtils.dynamicListSettingSpecifier("sourceMappings", mappingConfList,
+				new SettingUtils.KeyedListCallback<SourcePatternMapping>() {
+
+					@Override
+					public Collection<SettingSpecifier> mapListSettingKey(SourcePatternMapping value,
+							int index, String key) {
+						SettingSpecifier configGroup = new BasicGroupSettingSpecifier(
+								SourcePatternMapping.settings(key + "."));
+						return singletonList(configGroup);
+					}
+				}));
 
 		return results;
 	}
@@ -822,6 +863,95 @@ public class SolarQuantService extends BaseIdentifiable
 		if ( s != null ) {
 			s.setPropertyFilter(UID_PROPERTY, uid);
 		}
+	}
+
+	/**
+	 * Get a node ID value to use when posting datum to the service.
+	 *
+	 * @return the manual node ID, or {@code null} to use the runtime node ID
+	 */
+	public final Long getManualNodeId() {
+		return manualNodeId;
+	}
+
+	/**
+	 * Set a node ID value to use when posting datum to the service.
+	 *
+	 * @param manualNodeId
+	 *        the manual node ID to set, or {@code null} to use the runtime node
+	 *        ID
+	 */
+	public final void setManualNodeId(Long manualNodeId) {
+		this.manualNodeId = manualNodeId;
+	}
+
+	/**
+	 * Get a node ID value to use when posting datum to the service, as a
+	 * string.
+	 *
+	 * @return the manual node ID, or {@code null} to use the runtime node ID
+	 */
+	public final String getManualNodeIdValue() {
+		final Long nodeId = getManualNodeId();
+		return (nodeId != null ? nodeId.toString() : null);
+	}
+
+	/**
+	 * Set a node ID value to use when posting datum to the service, as a
+	 * string.
+	 *
+	 * @param manualNodeId
+	 *        the manual node ID to set, or {@code null} to use the runtime node
+	 *        ID
+	 */
+	public final void setManualNodeIdValue(String manualNodeId) {
+		Long nodeId = null;
+		try {
+			nodeId = Long.valueOf(manualNodeId);
+		} catch ( NumberFormatException e ) {
+			// ignore
+		}
+		setManualNodeId(nodeId);
+	}
+
+	/**
+	 * Get the source mappings.
+	 *
+	 * @return the mappings, or {@literal null}
+	 */
+	public SourcePatternMapping[] getSourceMappings() {
+		return sourceMappings;
+	}
+
+	/**
+	 * Set the source mappings.
+	 *
+	 * @param sourceMappings
+	 *        the mappings to set
+	 */
+	public void setSourceMappings(SourcePatternMapping[] sourceMappings) {
+		this.sourceMappings = sourceMappings;
+	}
+
+	/**
+	 * Get the number of configured source mappings.
+	 *
+	 * @return the number of property source mappings
+	 */
+	public int getSourceMappingsCount() {
+		final SourcePatternMapping[] mappings = getSourceMappings();
+		return (mappings != null ? mappings.length : 0);
+	}
+
+	/**
+	 * Set the number of configured source mappings.
+	 *
+	 * @param count
+	 *        the number of mappings to set
+	 */
+	public void setSourceMappingsCount(int count) {
+		setSourceMappings(ArrayUtils.arrayWithLength(getSourceMappings(), count,
+				SourcePatternMapping.class, SourcePatternMapping::new));
 	}
 
 }
