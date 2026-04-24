@@ -581,6 +581,7 @@ public class SolarQuantService extends BaseIdentifiable
 			return;
 		}
 		final String containerName = containerName();
+		log.info("Starting SolarQuant image {} in container {}", image, containerName);
 
 		try {
 			String[] cmd = { dockerCommand, "start", image, containerName };
@@ -614,13 +615,15 @@ public class SolarQuantService extends BaseIdentifiable
 				String serviceUrl = "http://localhost:" + port.trim();
 				activeServiceUrl = serviceUrl;
 				activeContainerName = containerName;
-				log.info("Started container {} on port {}; serviceUrl = {}", containerName, port.trim(),
-						serviceUrl);
+				log.info("Started SolarQuant container {} on port {}; serviceUrl = {}", containerName,
+						port.trim(), serviceUrl);
 			} else {
-				log.error("Failed to start container {} (exit {}): {}", containerName, exitCode, errMsg);
+				log.error("Failed to start SolarQuant container {} (exit {}): {}", containerName,
+						exitCode, errMsg);
 			}
 		} catch ( IOException e ) {
-			log.error("Error starting Docker container: {}", e.getMessage());
+			log.error("Error starting SolarQuant image {} in container {}: {}", image, containerName,
+					e.getMessage());
 		} catch ( InterruptedException e ) {
 			Thread.currentThread().interrupt();
 		}
