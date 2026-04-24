@@ -279,6 +279,9 @@ public class SolarQuantService extends BaseIdentifiable
 				datumsList.add(dm);
 			}
 
+			log.trace("Forwarding {} datum to [{}/measure]: {}", datumsList.size(), serviceUrl,
+					datumsList);
+
 			byte[] json = objectMapper.writeValueAsBytes(Map.of("datums", datumsList));
 			ByteList body = new ByteList(json);
 
